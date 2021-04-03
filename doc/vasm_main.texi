@@ -117,6 +117,10 @@ or additional options.
         unaligned instructions make your code crash when executed!
         Only set when you know what you do!
 
+@item -nomsg=<n>
+        Disable the informational message <n>. <n> has to be the number
+        of a valid informational message, like an optimization message.
+
 @item -nosym
         Strips all local symbols from the output file and doesn't include
         any other symbols than those which are required for external
@@ -130,6 +134,12 @@ or additional options.
         Write the generated assembler output to <ofile> rather than
         @file{a.out}.
 
+@item -pad=<value>
+        The given padding value can be one of multiple bytes (up to the
+        cpu-backend's address size). It is used for alignment purposes
+        and to fill gaps between absolute @code{ORG} sections in the
+        binary output module. Defaults to a zero-byte.
+
 @item -pic
         Try to generate position independant code. Every relocation is
         flagged by an error message.
@@ -142,6 +152,8 @@ or additional options.
         their attributes. This has the effect that when defining a second
         section with a different name but same attributes as a first one,
         it will switch to the first, instead of starting a new section.
+        Is set automatically, when using an output-module which doesn't
+        support section names. For example: aout, tos, xfile.
 
 @item -unsshift
         The shift-right operator (@code{>>}) treats the value to shift as
@@ -291,10 +303,29 @@ are three types of symbols:
       resolved by the linker.
 @end table
 
-Beginning with vasm V1.5c one expression symbol is always defined to allow
-conditional assembly depending on the assembler being used: @code{__VASM}.
-Its value depends on the selected cpu module. There may be other symbols which
-are pre-defined by the syntax- or by the cpu module.
+@section Predefined Symbols
+
+Beginning with vasm V1.5c at least one expression symbol is always defined
+to allow conditional assembly depending on the assembler being used:
+@code{__VASM}. Its value depends on the selected cpu module.
+
+Since V1.8i there may be a second internal symbol which reflects the
+format of the paths in the host file system. Currently there may be one of:
+@table @code
+@item __UNIXFS
+      Host file system uses Unix-style paths.
+@item __MSDOSFS
+      Host file system uses MS-DOS-, Windows-, Atari-style paths.
+@item __AMIGAFS
+      Host file system uses AmigaDOS-style paths.
+@end table
+Note that such a path-style symbol only depends on a @code{-D} option
+given while compiling vasm from source. Refer to the section about
+building vasm (Interface chapter) for a listing of all supported host
+OS options.
+
+There may be other internal symbols, which are defined by the
+syntax- or by the cpu module.
 
 @section Include Files
 
@@ -360,26 +391,42 @@ Has to be provided completely by the syntax module.
     @item Jordan Zebor
     @item Joseph Zatarski
     @item Frank Wille
+    @item Jim Westfall
+    @item Jens Sch"onfeld
     @item Henryk Richter
     @item Sebastian Pachuta
+    @item Thorsten Otto
     @item Esben Norby
     @item Gunther Nikl
     @item George Nakos
     @item Timm S. Mueller
     @item Gareth Morris
     @item Dominic Morris
+    @item Garry Marshall
     @item Jean-Paul Mari
     @item Mauricio Mu@~noz Lucero
     @item J@"org van de Loo
     @item Robert Leffmann
     @item Andreas Larsson
     @item Miro Kropacek
+    @item Olav Kr"omeke
+    @item Christoph Krc
     @item Mikael Kalms
+    @item Mark Jones
+    @item Bert Jahn
+    @item Daniel Illgen
     @item Matthew Hey
+    @item Stefan Haubenthal
+    @item S@o{}ren Hannibal
     @item Philippe Guichardon
     @item Romain Giot
+    @item Daniel Gerdgren
     @item Francois Galea
     @item Tom Duin
+    @item Kieran Connell
+    @item Fernando Cabrera
+    @item Patrick Bricout
+    @item Matthias Bock
     @item Karoly Balogh
 @end itemize
 
@@ -463,5 +510,6 @@ The frontend has the following error messages:
 @item 73: undefined macro argument name
 @item 74: required macro argument %d was left out
 @item 75: label <%s> redefined
+@item 76: base %d numerical term expected
 
 @end itemize

@@ -1,5 +1,5 @@
 /* syntax.c  syntax module for vasm */
-/* (c) in 2015-2018 by Frank Wille */
+/* (c) in 2015-2020 by Frank Wille */
 
 #include "vasm.h"
 #include "error.h"
@@ -13,7 +13,7 @@
    be provided by the main module.
 */
 
-char *syntax_copyright="vasm madmac syntax module 0.4e (c) 2015-2018 Frank Wille";
+char *syntax_copyright="vasm madmac syntax module 0.4g (c) 2015-2020 Frank Wille";
 hashtable *dirhash;
 char commentchar = ';';
 
@@ -241,13 +241,11 @@ static void handle_org(char *s)
 }
 
 
-#ifdef VASM_CPU_JAGRISC
 static void handle_68000(char *s)
 {
   try_end_rorg();  /* works like ending the last RORG-block */
   eol(s);
 }
-#endif
 
 
 static void handle_globl(char *s)
@@ -532,7 +530,7 @@ static void handle_macro(char *s)
     s = skip(s);
     if (ISEOL(s))
       s = NULL;  /* no named arguments */
-    new_macro(name,endm_dirlist,s);
+    new_macro(name,macro_dirlist,endm_dirlist,s);
     myfree(name);
   }
   else
@@ -634,6 +632,21 @@ static void handle_print(char *s)
 }
 
 
+static void handle_offset(char *s)
+{
+  taddr offs;
+
+  if (!ISEOL(s))
+    offs = parse_constexpr(&s);
+  else
+    offs = 0;
+
+  try_end_rorg();
+  switch_offset_section(NULL,offs);
+}
+
+
+
 struct {
   char *name;
   void (*func)(char *);
@@ -654,9 +667,7 @@ struct {
   "data",handle_data,
   "bss",handle_bss,
   "org",handle_org,
-#ifdef VASM_CPU_JAGRISC
   "68000",handle_68000,
-#endif
   "globl",handle_globl,
   "extern",handle_globl,
   "assert",handle_assert,
@@ -684,7 +695,9 @@ struct {
   "list",handle_list,
   "nlist",handle_nlist,
   "nolist",handle_nlist,
-  "print",handle_print
+  "print",handle_print,
+  "abs",handle_offset,
+  "offset",handle_offset
 };
 
 int dir_cnt = sizeof(directives) / sizeof(directives[0]);
@@ -914,16 +927,8 @@ char *parse_macro_arg(struct macro *m,char *s,
 {
   arg->len = 0;  /* cannot select specific named arguments */
   param->name = s;
-
-  if (*s=='\"' || *s=='\'') {
-    s = skip_string(s,*s,NULL);
-    param->len = s - param->name;
-  }
-  else {
-    s = skip_operand(s);
-    param->len = s - param->name;
-  }
-
+  s = skip_operand(s);
+  param->len = s - param->name;
   return s;
 }
 

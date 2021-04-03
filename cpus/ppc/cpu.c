@@ -1,6 +1,6 @@
 /*
 ** cpu.c PowerPC cpu-description file
-** (c) in 2002-2017 by Frank Wille
+** (c) in 2002-2019 by Frank Wille
 */
 
 #include "vasm.h"
@@ -12,7 +12,7 @@ mnemonic mnemonics[] = {
 
 int mnemonic_cnt=sizeof(mnemonics)/sizeof(mnemonics[0]);
 
-char *cpu_copyright="vasm PowerPC cpu backend 3.0 (c) 2002-2017 Frank Wille";
+char *cpu_copyright="vasm PowerPC cpu backend 3.1 (c) 2002-2019 Frank Wille";
 char *cpuname = "PowerPC";
 int bitsperbyte = 8;
 int bytespertaddr = 4;
@@ -464,6 +464,12 @@ illreloc:
       general_error(38);  /* illegal relocation */
     }
   }
+  else {
+     if (reloctype == REL_PC) {
+       /* a relative reference to an absolute label */
+       return val-pc;
+     }
+  }
 
   return val;
 }
@@ -475,26 +481,6 @@ static void fix_reloctype(dblock *db,int rtype)
 
   for (rl=db->relocs; rl!=NULL; rl=rl->next)
     rl->type = rtype;
-}
-
-
-static int cnt_insn_ops(instruction *p)
-{
-  int cnt = 0;
-
-  while (cnt<MAX_OPERANDS && p->op[cnt]!=NULL)
-    cnt++;
-  return cnt;
-}
-
-
-static int cnt_mnemo_ops(mnemonic *p)
-{
-  int cnt = 0;
-
-  while (cnt<MAX_OPERANDS && p->operand_type[cnt]!=UNUSED)
-    cnt++;
-  return cnt;
 }
 
 
@@ -567,7 +553,7 @@ size_t eval_operands(instruction *ip,section *sec,taddr pc,
 {
   mnemonic *mnemo = &mnemonics[ip->code];
   size_t isize = 4;
-  int i,j,omitted;
+  int i;
   operand op;
 
   if (insn != NULL)

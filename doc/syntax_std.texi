@@ -3,7 +3,7 @@ with the extension @code{std}.
 
 @section Legal
 
-    This module is written in 2002-2017 by Volker Barthelmann and
+    This module is written in 2002-2020 by Volker Barthelmann and
     is covered by the vasm copyright without modifications.
 
 @section Additional options for this module
@@ -282,12 +282,14 @@ See @code{.string}.
 @item .nolist
       The following lines will not be visible in a listing file.
 
-@item .org <exp>
+@item .org <exp>[,<fill>]
       Before any other section directive @code{<exp>} defines the absolute
       start address of the program. Within a section @code{<exp>} defines
       the offset from the start of this section for the subsequent code.
+      The optional <fill> value is only valid within a section and is used
+      to fill the space to the new program counter (defaults to zero).
       When <exp> starts with a current-pc symbol followed by a plus (@code{+})
-      operator, then the directive behaves like @code{.space}.
+      operator, then the directive just reserves space (filled with zero).
 
 @item .p2align <bit_count>[,<fill>][,<maxpad>]
       Insert as much fill bytes as required to reach an address where
@@ -308,6 +310,15 @@ See @code{.string}.
       fill value can be specified as a 16-bit word. Padding locations which
       are not already 16-bit aligned, will cause a warning and padded by
       zero-bytes.
+
+@item .popsection
+      Restore the top section from the internal section-stack.
+      Also refer to @code{.pushsection}.
+
+@item .pushsection <name>[,"<attributes>"][[,@@<type>]|[,%<type>]|[,<mem_flags>]]
+      Works exactly like @code{.section}, but additionally pushes
+      the current section onto an internal stack, where it may be restored
+      from by the @code{.popsection} directive.
 
 @item .quad <exp1>[,<exp2>...]
       Assign the values of the operands into successive quadwords
@@ -502,6 +513,8 @@ Predefined section directives:
       .section ".text","acrx"
 @item .tocd
       .section ".tocd","adrw"
+@item .dpage
+      .section ".dpage","adrw"
 @end table
 
 @section Known Problems

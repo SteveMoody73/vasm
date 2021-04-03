@@ -1,5 +1,5 @@
 /* parse.h - global parser support functions */
-/* (c) in 2009-2018 by Volker Barthelmann and Frank Wille */
+/* (c) in 2009-2020 by Volker Barthelmann and Frank Wille */
 
 #ifndef PARSE_H
 #define PARSE_H 
@@ -28,6 +28,7 @@ struct macro {
   size_t size;
   source *defsrc;
   int defline;
+  int srcdebug;                 /* allow source-level debugging in macro */
   int num_argnames;		/* -1 for no named arguments used */
   struct macarg *argnames;
   struct macarg *defaults;
@@ -43,6 +44,7 @@ struct namelen {
 /* global variables */
 extern int esc_sequences,nocase_macros;
 extern int maxmacparams,maxmacrecurs;
+extern int msource_disable;
 
 /* functions */
 char *escape(char *,char *);
@@ -57,12 +59,11 @@ dblock *parse_string(char **,char,int);
 char *parse_symbol(char **);
 char *parse_labeldef(char **,int);
 int check_indir(char *,char *);
-void include_binary_file(char *,long,unsigned long);
 int real_line(void);
 void new_repeat(int,char *,char *,struct namelen *,struct namelen *);
 int find_macarg_name(source *,char *,size_t);
 struct macarg *addmacarg(struct macarg **,char *,char *);
-macro *new_macro(char *,struct namelen *,char *);
+macro *new_macro(char *,struct namelen *,struct namelen *,char *);
 macro *find_macro(char *,int);
 int execute_macro(char *,int,char **,int *,int,char *);
 int leave_macro(void);

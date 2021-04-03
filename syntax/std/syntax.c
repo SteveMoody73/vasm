@@ -1,5 +1,5 @@
 /* syntax.c  syntax module for vasm */
-/* (c) in 2002-2018 by Volker Barthelmann and Frank Wille */
+/* (c) in 2002-2020 by Volker Barthelmann and Frank Wille */
 
 #include "vasm.h"
 #include "stabs.h"
@@ -13,7 +13,7 @@
    be provided by the main module.
 */
 
-char *syntax_copyright="vasm std syntax module 5.1d (c) 2002-2018 Volker Barthelmann";
+char *syntax_copyright="vasm std syntax module 5.3 (c) 2002-2020 Volker Barthelmann";
 hashtable *dirhash;
 
 static char textname[]=".text",textattr[]="acrx";
@@ -24,8 +24,9 @@ static char rodataname[]=".rodata",rodataattr[]="adr";
 static char bssname[]=".bss",bssattr[]="aurw";
 static char sbssname[]=".sbss",sbssattr[]="aurw";
 static char tocdname[]=".tocd",tocdattr[]="adrw";
+static char dpagename[]=".dpage",dpageattr[]="adrw";
 
-#if defined(VASM_CPU_C16X) || defined(VASM_CPU_M68K) || defined(VASM_CPU_650X) || defined(VASM_CPU_ARM) || defined(VASM_CPU_Z80)|| defined(VASM_CPU_6800) || defined(VASM_CPU_JAGRISC) || defined(VASM_CPU_QNICE)
+#if defined(VASM_CPU_C16X) || defined(VASM_CPU_M68K) || defined(VASM_CPU_650X) || defined(VASM_CPU_ARM) || defined(VASM_CPU_Z80)|| defined(VASM_CPU_6800) || defined(VASM_CPU_JAGRISC) || defined(VASM_CPU_QNICE) || defined(VASM_CPU_6809)
 char commentchar=';';
 #else
 char commentchar='#';
@@ -33,11 +34,15 @@ char commentchar='#';
 char *defsectname = textname;
 char *defsecttype = "acrwx";
 
+static char macroname[] = ".macro";
 static char endmname[] = ".endm";
 static char reptname[] = ".rept";
 static char irpname[] = ".irp";
 static char irpcname[] = ".irpc";
 static char endrname[] = ".endr";
+static struct namelen dmacro_dirlist[] = {
+  { 6,&macroname[0] }, { 0,0 }
+};
 static struct namelen dendm_dirlist[] = {
   { 5,&endmname[0] }, { 0,0 }
 };
@@ -49,6 +54,9 @@ static struct namelen dendr_dirlist[] = {
 };
 static struct namelen endm_dirlist[] = {
   { 4,&endmname[1] }, { 0,0 }
+};
+static struct namelen macro_dirlist[] = {
+  { 5,&macroname[1] }, { 0,0 }
 };
 static struct namelen rept_dirlist[] = {
   { 4,&reptname[1] }, { 3,&irpname[1] }, { 4,&irpcname[1] },{ 0,0 }
@@ -204,11 +212,24 @@ static void handle_section(char *s)
     if(!strcmp(name,bssname)) attr=bssattr;
     if(!strcmp(name,sbssname)) attr=sbssattr;
     if(!strcmp(name,tocdname)) attr=tocdattr;
+    if(!strcmp(name,dpagename)) attr=dpageattr;
   }
 
   sec=new_section(name,attr,1);
   sec->memattr=mem;
   set_section(sec);
+  eol(s);
+}
+
+static void handle_pushsection(char *s)
+{
+  push_section();
+  handle_section(s);
+}
+
+static void handle_popsection(char *s)
+{
+  pop_section();
   eol(s);
 }
 
@@ -226,7 +247,17 @@ static void handle_org(char *s)
   }
   else if (current_section != NULL) {
     /* .org inside a section is treated as an offset */
-    add_atom(0,new_roffs_atom(parse_expr_tmplab(&s)));
+    expr *offs = parse_expr_tmplab(&s);
+    expr *fill;
+
+    s = skip(s);
+    if (*s == ',') {
+      /* ...and may be followed by an optional fill-value */
+      s = skip(s+1);
+      fill = parse_expr_tmplab(&s);
+    }
+    else fill = NULL;
+    add_atom(0,new_roffs_atom(offs,fill));
   }
   else
     set_section(new_org(parse_constexpr(&s)));
@@ -301,7 +332,6 @@ static void handle_data(char *s,int size,int noalign)
 static void do_equ(char *s,int equiv)
 {
   char *labname;
-  symbol *label;
 
   if(!(labname=parse_identifier(&s))){
     syntax_error(10);  /* identifier expected */
@@ -313,7 +343,7 @@ static void do_equ(char *s,int equiv)
   else
     s=skip(s+1);
   if(equiv) check_symbol(labname);
-  label=new_abs(labname,parse_expr_tmplab(&s));
+  new_abs(labname,parse_expr_tmplab(&s));
   myfree(labname);
   eol(s);
 }
@@ -735,7 +765,8 @@ static void handle_macro(char *s)
     s=skip(s);
     if(ISEOL(s))
       s=NULL;
-    new_macro(name,nodotneeded?endm_dirlist:dendm_dirlist,s);
+    new_macro(name,nodotneeded?macro_dirlist:dmacro_dirlist,
+              nodotneeded?endm_dirlist:dendm_dirlist,s);
     myfree(name);
   }else
     syntax_error(10);  /* identifier expected */
@@ -891,6 +922,7 @@ static void handle_sdata2s(char *s){ handle_section(sdata2name);eol(s);}
 static void handle_rodatas(char *s){ handle_section(rodataname);eol(s);}
 static void handle_sbsss(char *s){ handle_section(sbssname);eol(s);}
 static void handle_tocds(char *s){ handle_section(tocdname);eol(s);}
+static void handle_dpages(char *s){ handle_section(dpagename);eol(s);}
 
 static void handle_abort(char *s)
 {
@@ -917,6 +949,11 @@ static void handle_fail(char *s)
   else
     general_error(30);  /* expression must be constant */
   eol(s);
+}
+
+static void handle_vdebug(char *s)
+{
+  add_atom(0,new_atom(VASMDEBUG,0));
 }
 
 static void handle_title(char *s)
@@ -968,6 +1005,8 @@ struct {
 } directives[]={
   "org",handle_org,
   "section",handle_section,
+  "pushsection",handle_pushsection,
+  "popsection",handle_popsection,
   "string",handle_string,
   "byte",handle_8bit,
   "ascii",handle_8bit,
@@ -996,6 +1035,7 @@ struct {
   "sdata2",handle_sdata2s,
   "sbss",handle_sbsss,
   "tocd",handle_tocds,
+  "dpage",handle_dpages,
   "equ",handle_set,
   "set",handle_set,
   "equiv",handle_equiv,
@@ -1053,6 +1093,7 @@ struct {
   "list",handle_list,
   "nolist",handle_nolist,
   "swbeg",handle_swbeg,
+  "vdebug",handle_vdebug,
 };
 
 int dir_cnt=sizeof(directives)/sizeof(directives[0]);

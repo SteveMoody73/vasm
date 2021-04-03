@@ -1,13 +1,13 @@
 /* parse.c - global parser support functions */
-/* (c) in 2009-2018 by Volker Barthelmann and Frank Wille */
+/* (c) in 2009-2020 by Volker Barthelmann and Frank Wille */
 
 #include "vasm.h"
-#include "osdep.h"
 
 int esc_sequences = 0;  /* do not handle escape sequences by default */
 int nocase_macros = 0;  /* macro names are case-insensitive */
 int maxmacparams = MAXMACPARAMS;
 int maxmacrecurs = MAXMACRECURS;
+int msource_disable;    /* true: disable source level debugging within macro */
 
 #ifndef MACROHTABSIZE
 #define MACROHTABSIZE 0x800
@@ -23,6 +23,7 @@ static macro *first_macro;
 static macro *cur_macro;
 static struct namelen *enddir_list;
 static size_t enddir_minlen;
+static struct namelen *macrdir_list;
 static struct namelen *reptdir_list;
 
 static int rept_cnt = -1;
@@ -273,7 +274,6 @@ dblock *parse_string(char **str,char delim,int width)
 {
   size_t size;
   dblock *db;
-  char *p,c;
   char *s = *str;
 
   if (width & 7)
@@ -289,7 +289,7 @@ dblock *parse_string(char **str,char delim,int width)
   db->data = db->size ? mymalloc(db->size) : NULL;
 
   /* now copy the string for real into the dblock */
-  s = read_string(db->data,s,delim,width);
+  s = read_string((char *)db->data,s,delim,width);
   *str = s;
   return db;
 }
@@ -365,53 +365,21 @@ int check_indir(char *p,char *q)
 }
 
 
-void include_binary_file(char *inname,long nbskip,unsigned long nbkeep)
-/* locate a binary file and convert into a data atom */
-{
-  char *filename;
-  FILE *f;
-
-  filename = convert_path(inname);
-  if (f = locate_file(filename,"rb",NULL)) {
-    size_t size = filesize(f);
-
-    if (size > 0) {
-      if (nbskip>=0 && nbskip<=size) {
-        dblock *db = new_dblock();
-
-        if (nbkeep > (unsigned long)(size - nbskip) || nbkeep==0)
-          db->size = size - (size_t)nbskip;
-        else
-          db->size = nbkeep;
-
-        db->data = mymalloc(size);
-        if (nbskip > 0)
-          fseek(f,nbskip,SEEK_SET);
-
-        fread(db->data,1,db->size,f);
-        add_atom(0,new_data_atom(db,1));
-      }
-      else
-        general_error(46);  /* bad file-offset argument */
-    }
-    fclose(f);
-  }
-  myfree(filename);
-}
-
-
 static struct namelen *dirlist_match(char *s,char *e,struct namelen *list)
 /* check if a directive from the list matches the current source location */
 {
   char *name;
   size_t len;
 
-  if (!ISIDSTART(*s))
-    return NULL;
+  if (!ISIDSTART(*s) || (!isspace((unsigned char )*(s-1)) && *(s-1)!='\0'))
+    return NULL;  /* cannot be start of directive */
 
-  name = s;
+  name = s++;
   while (s<e && ISIDCHAR(*s))
     s++;
+
+  if (!isspace((unsigned char )*s) && *s!='\0')
+    return NULL;  /* cannot be end of directive */
 
   while (len = list->len) {
     if (s-name==len && !strnicmp(name,list->name,len))
@@ -539,7 +507,8 @@ struct macarg *addmacarg(struct macarg **list,char *start,char *end)
 }
 
 
-macro *new_macro(char *name,struct namelen *endmlist,char *args)
+macro *new_macro(char *name,struct namelen *maclist,struct namelen *endmlist,
+                 char *args)
 {
   hashdata data;
   macro *m = NULL;
@@ -553,10 +522,11 @@ macro *new_macro(char *name,struct namelen *endmlist,char *args)
     m->argnames = m->defaults = NULL;
     m->recursions = 0;
     m->vararg = -1;
+    m->srcdebug = !msource_disable;
 
     /* remember the start-line of this macro definition in the real source */
     if (cur_src->defsrc)
-      ierror(0); /* macro can't be defined in a repetition of another macro */
+      general_error(26,cur_src->name);  /* macro definition inside macro */
     m->defsrc = cur_src;
     m->defline = cur_src->line;
 
@@ -584,6 +554,7 @@ macro *new_macro(char *name,struct namelen *endmlist,char *args)
     cur_macro = m;
     enddir_list = endmlist;
     enddir_minlen = dirlist_minlen(endmlist);
+    macrdir_list = maclist;
     rept_cnt = -1;
     rept_start = NULL;
 
@@ -664,7 +635,7 @@ int execute_macro(char *name,int name_len,char **q,int *q_len,int nq,
   nq = 0;
 #endif
 
-  if (!(m = find_macro(name,name_len)))
+  if ((m = find_macro(name,name_len)) == NULL)
     return 0;
 
   /* it's a macro: read arguments and execute it */
@@ -678,6 +649,7 @@ int execute_macro(char *name,int name_len,char **q,int *q_len,int nq,
   src->defsrc = m->defsrc;
   src->defline = m->defline;
   src->argnames = m->argnames;
+  src->srcdebug = m->srcdebug;
 
 #if MAX_QUALIFIERS>0
   /* remember given qualifiers, or use the cpu's default qualifiers */
@@ -941,8 +913,7 @@ int copy_macro_param(source *src,int n,char *d,int len)
 
     return i==src->param_len[n] ? i : -1;
   }
-  else
-    return 0;
+  return 0;
 }
 
 
@@ -950,16 +921,14 @@ int copy_macro_param(source *src,int n,char *d,int len)
 int copy_macro_qual(source *src,int n,char *d,int len)
 {
 #if MAX_QUALIFIERS > 0
-  int i;
-
   if (n < src->num_quals) {
+    int i;
     for (i=0; i<src->qual_len[n] && len>0; i++,len--)
       *d++ = src->qual[n][i];
+    return i==src->qual_len[n] ? i : -1;
   }
-  return i==src->qual_len[n] ? i : -1;
-#else
-  return 0;
 #endif
+  return 0;
 }
 
 /* Switch to a named offset section which defines the structure. */
@@ -1067,13 +1036,13 @@ char *read_next_line(void)
   /* line buffer starts with 0, to allow checks for left-hand character */
   *d++ = 0;
 
-  if (enddir_list!=NULL && (srcend-s)>enddir_minlen) {
+  if (enddir_list!=NULL && (size_t)(srcend-s)>enddir_minlen) {
     /* reading a definition, like a macro or a repeat-block, until an
        end directive is found */
     struct namelen *dir;
     int rept_nest = 1;
 
-    if (nparam>=0 && cur_macro!=NULL)
+    if (nparam>=0 && cur_macro!=NULL)     /* @@@ needed? */
         general_error(26,cur_src->name);  /* macro definition inside macro */
 
     while (s <= (srcend-enddir_minlen)) {
@@ -1095,6 +1064,12 @@ char *read_next_line(void)
         s += dir->len;
         rept_nest++;
       }
+#ifdef MACRO_IN_MACRO_CHECK  /* caution: misdetection in operands possible */
+      else if (cur_macro!=NULL &&
+               (dir = dirlist_match(s,srcend,macrdir_list)) != NULL) {
+        general_error(26,cur_macro->name);  /* macro definition inside macro */
+      }
+#endif
 
       if (*s=='\"' || *s=='\'') {
         char c = *s++;

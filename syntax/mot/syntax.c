@@ -1,5 +1,5 @@
 /* syntax.c  syntax module for vasm */
-/* (c) in 2002-2019 by Frank Wille */
+/* (c) in 2002-2020 by Frank Wille */
 
 #include "vasm.h"
 
@@ -12,7 +12,7 @@
    be provided by the main module.
 */
 
-char *syntax_copyright="vasm motorola syntax module 3.13 (c) 2002-2019 Frank Wille";
+char *syntax_copyright="vasm motorola syntax module 3.14c (c) 2002-2020 Frank Wille";
 hashtable *dirhash;
 char commentchar = ';';
 
@@ -29,6 +29,9 @@ static char line_name[] = "__LINE__";
 char *defsectname = code_name;
 char *defsecttype = code_type;
 
+static struct namelen macro_dirlist[] = {
+  { 5,"macro" }, { 0,0 }
+};
 static struct namelen endm_dirlist[] = {
   { 4,"endm" }, { 0,0 }
 };
@@ -51,7 +54,6 @@ static int allow_spaces;
 static int check_comm;
 static int dot_idchar;
 static char local_char = '.';
-static int tosout;  /* output is for Atari TOS */
 
 /* (currenty two-byte only) padding value for CNOPs */
 #ifdef VASM_CPU_M68K
@@ -436,8 +438,8 @@ static void handle_section(char *s)
     /* read section type and memory attributes */
     s = read_sec_attr(attr,skip(s+1),&mem);
   }
-  else if (tosout) {
-    /* only name is given - guess type from name for Atari TOS */
+  else if (unnamed_sections) {
+    /* only name is given - guess type from the name (i.e. name is type) */
     if (!stricmp(name,"data")) {
       strcpy(attr,data_type);
       name = data_name;
@@ -456,7 +458,7 @@ static void handle_section(char *s)
     }
   }
   else {
-    /* missing section type defaults to CODE */
+    /* otherwise a missing section type defaults to CODE */
     strcpy(attr,code_type);
   }
 
@@ -555,7 +557,18 @@ static void handle_org(char *s)
 
 static void handle_rorg(char *s)
 {
-  add_atom(0,new_roffs_atom(parse_expr_tmplab(&s)));
+  expr *offs = parse_expr_tmplab(&s);
+  expr *fill;
+
+  s = skip(s);
+  if (*s == ',') {
+    /* may be followed by an optional fill-value */
+    s = skip(s+1);
+    fill = parse_expr_tmplab(&s);
+  }
+  else
+    fill = NULL;
+  add_atom(0,new_roffs_atom(offs,fill));
 }
 
 
@@ -1023,6 +1036,25 @@ static void handle_debug(char *s)
 }
 
 
+static void handle_msource(char *s)
+{
+  if (!strnicmp(s,"on",2))
+    msource_disable = 0;
+  else if (!strnicmp(s,"off",3))
+    msource_disable = 1;
+  else
+    msource_disable = atoi(s) == 0;
+}
+
+
+static void handle_vdebug(char *s)
+{
+  atom *a = new_atom(VASMDEBUG,0);
+
+  add_atom(0,a);
+}
+
+
 static void handle_incdir(char *s)
 {
   char *name;
@@ -1092,8 +1124,10 @@ static void handle_macro(char *s)
 {
   char *name;
 
-  if (name = parse_name(&s))
-    new_macro(name,endm_dirlist,NULL);
+  if (name = parse_identifier(&s))
+    new_macro(name,macro_dirlist,endm_dirlist,NULL);
+  else
+    syntax_error(10);  /* identifier expected */
 }
 
 
@@ -1285,6 +1319,10 @@ static char *handle_iif(char *line_ptr)
 {
   if (strnicmp(line_ptr,"iif",3) == 0 &&
       isspace((unsigned char)line_ptr[3])) {
+    char *expr_copy,*expr_end;
+    int condition;
+    size_t expr_len;
+
     line_ptr += 3;
 
     /* Move the line ptr to the beginning of the iif expression. */
@@ -1292,10 +1330,10 @@ static char *handle_iif(char *line_ptr)
 
     /* As eval_ifexp_advance() may modify the input string, duplicate
        it for the case when the parsing should continue. */
-    char *expr_copy = mystrdup(line_ptr);
-    char *expr_end = expr_copy;
-    const int condition = eval_ifexp_advance(&expr_end,1);
-    size_t expr_len = expr_end - expr_copy;
+    expr_copy = mystrdup(line_ptr);
+    expr_end = expr_copy;
+    condition = eval_ifexp_advance(&expr_end,1);
+    expr_len = expr_end - expr_copy;
     myfree(expr_copy);
 
     if (condition) {
@@ -1338,6 +1376,18 @@ static void handle_iflt(char *s)
 static void handle_ifle(char *s)
 {
   ifexp(s,5);
+}
+
+static void handle_ifp1(char *s)
+{
+  cond_if(1);        /* vasm parses only once, so we assume true */
+  syntax_error(25);  /* and warn about it */
+}
+
+static void handle_ifp2(char *s)
+{
+  cond_if(0);        /* vasm parses only once, so we assume false */
+  syntax_error(26);  /* and warn about it */
 }
 
 static void handle_else(char *s)
@@ -1585,6 +1635,18 @@ static void handle_einline(char *s)
     syntax_error(20);  /* einline without inline */
 }
 
+static void handle_pushsect(char *s)
+{
+  push_section();
+  eol(s);
+}
+
+static void handle_popsect(char *s)
+{
+  pop_section();
+  eol(s);
+}
+
 
 #define D 1 /* available for DevPac */
 #define P 2 /* available for PhxAss */
@@ -1632,6 +1694,9 @@ struct {
   "even",P|D,handle_even,
   "odd",0,handle_odd,
   "dc",P|D,handle_d16,
+  "db",0,handle_d8,
+  "dw",0,handle_d16,
+  "dl",0,handle_d32,
   "dc.b",P|D,handle_d8,
   "dc.w",P|D,handle_d16,
   "dc.l",P|D,handle_d32,
@@ -1693,6 +1758,8 @@ struct {
   "symdebug",P,eol,
   "dsource",P,handle_dsource,
   "debug",P,handle_debug,
+  "msource",0,handle_msource,
+  "vdebug",0,handle_vdebug,
   "comment",P|D,handle_comment,
   "incdir",P|D,handle_incdir,
   "include",P|D,handle_include,
@@ -1722,6 +1789,9 @@ struct {
   "ifmi",0,handle_iflt,
   "ifpl",0,handle_ifge,
   "if",P,handle_ifne,
+  "ifp1",0,handle_ifp1,
+  "if1",0,handle_ifp1,
+  "if2",0,handle_ifp2,
   "else",P|D,handle_else,
   "elseif",P|D,handle_else,
   "endif",P|D,handle_endif,
@@ -1767,11 +1837,13 @@ struct {
   "struct",0,handle_struct,
   "estruct",0,handle_endstruct,
 #endif
+  "pushsection",0,handle_pushsect,
+  "popsection",0,handle_popsect,
 };
 #undef P
 #undef D
 
-int dir_cnt = sizeof(directives) / sizeof(directives[0]);
+size_t dir_cnt = sizeof(directives) / sizeof(directives[0]);
 
 
 /* checks for a valid directive, and return index when found, -1 otherwise */
@@ -1847,28 +1919,7 @@ static char *skip_local(char *p)
 }
 
 
-static char *parse_local_label(char **start)
-{
-  char *s = *start;
-  char *p = skip_local(s);
-  char *name = NULL;
-
-  if (p > (s+1)) {  /* identifier with at least 2 characters */
-    if (*s == local_char) {
-      /* .label */
-      name = make_local_label(NULL,0,s,p-s);
-      *start = p;
-    }
-    else if (*(p-1) == '$') {
-      /* label$ */
-      name = make_local_label(NULL,0,s,(p-1)-s);
-      *start = p;
-    }
-  }
-  return name;
-}
-
-
+#if STRUCT
 /* When a structure with this name exists, insert its atoms and either
    initialize with new values or accept its default values. */
 static int execute_struct(char *name,int name_len,char *s)
@@ -1968,6 +2019,7 @@ static int execute_struct(char *name,int name_len,char *s)
 
   return 1;
 }
+#endif
 
 
 void parse(void)
@@ -1977,7 +2029,7 @@ void parse(void)
   char *op[MAX_OPERANDS];
   int ext_len[MAX_QUALIFIERS?MAX_QUALIFIERS:1];
   int op_len[MAX_OPERANDS];
-  int i,ext_cnt,op_cnt,inst_len;
+  int ext_cnt,op_cnt,inst_len;
   instruction *ip;
 
   while (line = read_next_line()) {
@@ -2013,7 +2065,6 @@ void parse(void)
 
     if (labname = parse_labeldef(&s,0)) {
       /* we have found a global or local label */
-      int lablen = strlen(labname);
       uint32_t symflags = 0;
       symbol *label;
 
@@ -2067,13 +2118,14 @@ void parse(void)
         setfilename(labname);
       }
       else if (!strnicmp(s,"macro",5) &&
-               (isspace((unsigned char)*(s+5)) || *(s+5)=='\0')) {
+               (isspace((unsigned char)*(s+5)) || *(s+5)=='\0'
+                || *(s+5)==commentchar)) {
         /* reread original label field as macro name, no local macros */
         s = line;
         myfree(labname);
         if (!(labname = parse_identifier(&s)))
           ierror(0);
-        new_macro(labname,endm_dirlist,NULL);
+        new_macro(labname,macro_dirlist,endm_dirlist,NULL);
         myfree(labname);
         continue;
       }
@@ -2162,6 +2214,7 @@ void parse(void)
 
 #if MAX_QUALIFIERS>0
     if (ip) {
+      int i;
       for (i=0; i<ext_cnt; i++)
         ip->qualifiers[i] = cnvstr(ext[i],ext_len[i]);
       for(; i<MAX_QUALIFIERS; i++)
@@ -2199,14 +2252,10 @@ char *parse_macro_arg(struct macro *m,char *s,
         }
         else {
           param->len = s - param->name;
-          s++;
-          break;
+          return s + 1;
         }
       }
     }
-  }
-  else if (*s=='\"' || *s=='\'') {
-    s = skip_string(s,*s,NULL);
     param->len = s - param->name;
   }
   else {
@@ -2472,9 +2521,12 @@ char *get_local_label(char **start)
   if (p!=NULL && *p=='\\' && ISIDSTART(*s) && *s!=local_char && *(p-1)!='$') {
     /* skip local part of global\local label */
     s = p + 1;
-    p = skip_local(s);
-    name = make_local_label(*start,(s-1)-*start,s,*(p-1)=='$'?(p-1)-s:p-s);
-    *start = skip(p);
+    if (p = skip_local(s)) {
+      name = make_local_label(*start,(s-1)-*start,s,*(p-1)=='$'?(p-1)-s:p-s);
+      *start = skip(p);
+    }
+    else
+      return NULL;
   }
   else if (p!=NULL && p>(s+1)) {  /* identifier with at least 2 characters */
     if (*s == local_char) {
@@ -2493,7 +2545,7 @@ char *get_local_label(char **start)
 }
 
 
-int init_syntax()
+int init_syntax(void)
 {
   size_t i;
   symbol *sym;
@@ -2503,8 +2555,6 @@ int init_syntax()
   if (devpac_compat) avail = 1;
   else if (phxass_compat) avail = 2;
   else avail = 0;
-
-  tosout = !strcmp(output_format,"tos");
 
   dirhash = new_hashtable(0x200); /* @@@ */
   for (i=0; i<dir_cnt; i++) {
@@ -2516,7 +2566,6 @@ int init_syntax()
   
   cond_init();
   current_pc_char = '*';
-  secname_attr = 1; /* attribute is used to differentiate between sections */
   carg1 = number_expr(1);        /* CARG start value for macro invocations */
   set_internal_abs(REPTNSYM,-1); /* reserve the REPTN symbol */
   sym = internal_abs(rs_name);
@@ -2565,6 +2614,7 @@ int syntax_args(char *p)
     devpac_compat = 1;
     align_data = 1;
     esc_sequences = 0;
+    dot_idchar = 1;
     allmp = 1;
     warn_unalloc_ini_dat = 1;
     return 1;
